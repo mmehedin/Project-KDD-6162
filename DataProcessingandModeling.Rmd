@@ -1,0 +1,352 @@
+---
+title: " Home Loan credit risk prediction: DataPreparation and Modeling"
+author: "Group 5: Mihai Mehedint, Shourya Badam, Karthikeya Vayuputra Chittuluri,   Surya Pavan Malireddy"
+date: "August 1, 2018"
+output: 
+  html_document:
+    toc: true
+---
+##Including all the libraries
+
+```{r dataload, echo=TRUE,message=FALSE}
+if(!require(missForest)) install.packages("missForest",repos = "http://cran.us.r-project.org")
+if(!require(VIM)) install.packages("VIM",repos = "http://cran.us.r-project.org")
+if(!require(mice)) install.packages("mice",repos = "http://cran.us.r-project.org")
+if(!require(corrplot)) install.packages("corrplot",repos = "http://cran.us.r-project.org")
+if(!require(scales)) install.packages("scales",repos = "http://cran.us.r-project.org")
+if(!require(tidyr)) install.packages("tidyr",repos = "http://cran.us.r-project.org")
+library(missForest)
+library(VIM)
+library(ggplot2)
+library(plyr)
+library(e1071)
+library(mice)
+library(corrplot)
+library(tidyr)
+library(scales)
+
+```
+
+##Loading the datasets
+```{r}
+loan.data <- read.csv(file="application_train.csv", header=TRUE, sep=",")
+loan.data.all <- read.csv(file="application_train_all.csv", header=TRUE, sep=",")
+ccard <- read.csv(file="credit_card_balance.csv", header = TRUE, sep=",")
+attach(loan.data)
+attach(loan.data.all)
+attach(ccard)
+summary(loan.data)
+source("outlierscript.R")
+```
+
+##Missing Values
+```{r}
+sapply(loan.data, function(x) sum(is.na(x)))
+missing<- loan.data[!complete.cases(loan.data),]; head(missing)
+#complete.cases(loan.data) != is.na(loan.data)
+sum(table(which(loan.data == '')))   #find how many missing values are there
+sum(sapply(loan.data, function(x) sum(is.na(x))))
+
+
+#Using mice  
+
+mice_plot <- aggr(loan.data, col=c('navyblue','yellow'),
+                  numbers=TRUE, sortVars=TRUE,
+                  labels=names(loan.data), cex.axis=.7,
+                  gap=3, ylab=c("Missing data","Pattern"))
+``` 
+
+##Box plot
+```{r}
+amt_income <- loan.data$AMT_INCOME_TOTAL
+amt_credit <- loan.data$AMT_CREDIT
+hist(amt_income) #histogram
+hist(amt_credit)
+boxplot(loan.data$AMT_INCOME_TOTAL,data=loan.data, main="Income Data", 
+        xlab="Income", ylab="Income")
+boxplot(loan.data$AMT_CREDIT,data=loan.data, main="Credit Data", 
+        xlab="Credit", ylab="Credit")
+#display amt credit
+bp <- ggplot(loan.data, aes(x=AMT_CREDIT, y=AMT_INCOME_TOTAL, group=loan.data$CNT_CHILDREN)) + 
+  geom_boxplot(fill="red", alpha=0.2) + 
+  xlab("AMT CREDIT")+ylab("AMT INCOME")
+bp <- bp + scale_x_continuous(trans='log2') +
+  scale_y_continuous(trans='log2')
+bp
+
+
+ggplot(loan.data, aes(x = as.factor(loan.data$CNT_CHILDREN), fill = CNT_CHILDREN==1, color=loan.data$AMT_INCOME_TOTAL)) +
+  geom_density(alpha = .3)
+
+ggplot(loan.data[loan.data$AMT_INCOME_TOTAL<100000,], aes(x = AMT_INCOME_TOTAL/10000, fill = as.factor(CNT_CHILDREN))) +
+  geom_density(alpha = .3)
+
+ggplot(loan.data, aes(x = as.factor(loan.data$CNT_CHILDREN), fill = AMT_CREDIT)) +
+  geom_density(alpha = .3)
+
+ggplot(loan.data, aes(x = as.factor(loan.data$CNT_CHILDREN), fill = AMT_CREDIT)) +
+  geom_density(alpha = .3)
+
+#display amt income
+#using CNT Children since it has discrete integer values to deal with continuous values and separate the groups
+bp <- ggplot(loan.data, aes(x="", y=AMT_CREDIT, group=loan.data$CNT_CHILDREN)) + 
+  geom_boxplot(fill="blue", alpha=0.2) + 
+  xlab("CNT CHILDREN")+ylab("AMT CREDIT")
+bp <- bp + scale_y_continuous(trans='log2')
+bp
+
+par(mar=c(1,1,1,1))
+outlierKD(loan.data, AMT_INCOME_TOTAL) 
+
+outlierKD(loan.data, AMT_CREDIT)
+
+```
+
+##Flag variables  
+flag variables for the NAME_FAMILY_STATUS categorical attribute
+```{r}
+loan.data$NAME_FAMILY_STATUS <- loan.data$NAME_FAMILY_STATUS > 0
+#loan.data$NAME_FAMILY_STATUS
+
+loan.data$flag_s_not_m <- 0
+loan.data$flag_m <- 0
+loan.data$flag_c_m <- 0
+loan.data$flag_w <- 0
+loan.data$flag_s <- 0
+
+#flag family status
+loan.data$flag_s_not_m[loan.data$NAME_FAMILY_STATUS == 'Single / not married'] <- 1
+#check field
+#loan.data$flag_s_not_m
+#continue for all other fields
+loan.data$flag_m[loan.data$NAME_FAMILY_STATUS == 'Married'] <- 1
+#check field
+#loan.data$flag_m
+loan.data$flag_c_m[loan.data$NAME_FAMILY_STATUS == 'Civil Marriage'] <- 1
+#check field
+#loan.data$flag_c_m
+loan.data$flag_w[loan.data$NAME_FAMILY_STATUS == 'Widow'] <- 1
+#check field
+#loan.data$flag_w
+loan.data$flag_s[loan.data$NAME_FAMILY_STATUS == 'Separated'] <- 1
+#check field
+#loan.data$flag_s
+
+count(loan.data, 'flag_s_not_m')
+count(loan.data, 'flag_m')
+count(loan.data, 'flag_c_m')
+count(loan.data, 'flag_w')
+count(loan.data, 'flag_s')
+```
+
+##Z-Score Standardization
+```{r}
+loan.data$zscore.income <- (loan.data$AMT_INCOME_TOTAL - mean(loan.data$AMT_INCOME_TOTAL))/sd(loan.data$AMT_INCOME_TOTAL)
+#loan.data$zscore.income
+loan.data$zscore.credit <- (loan.data$AMT_CREDIT - mean(loan.data$AMT_CREDIT))/sd(loan.data$AMT_CREDIT)
+#loan.data$zscore.credit
+
+income_skew <- (3*(mean(loan.data$AMT_INCOME_TOTAL)-median(loan.data$AMT_INCOME_TOTAL))) / sd(loan.data$AMT_INCOME_TOTAL)
+income_skew
+
+credit_skew <- (3*(mean(loan.data$AMT_CREDIT)-median(loan.data$AMT_CREDIT))) / sd(loan.data$AMT_CREDIT)
+credit_skew
+
+skewincome = loan.data$zscore.income     
+skewa = skewness(skewincome)                #skewness fc.
+skewa
+skewcredit = loan.data$zscore.credit     
+skewa = skewness(skewcredit)                #skewness fc
+skewa
+
+#Outliers using the Z-Score values
+
+outlierKD(loan.data, zscore.income)
+
+loan.data$zscore.credit <- (loan.data$AMT_CREDIT - mean(loan.data$AMT_CREDIT))/sd(loan.data$AMT_CREDIT)
+#loan.data$zscore.credit
+
+skewcredit = loan.data$zscore.credit     
+skewa = skewness(skewcredit)                #skewness fc
+skewa
+
+
+amt_credit_sd <- sd(loan.data$AMT_CREDIT)
+amt_credit_mean <- mean(loan.data$AMT_CREDIT)
+amt_credit_sd
+amt_credit_mean
+zscore.amt_credit <- (loan.data$AMT_CREDIT - amt_credit_mean) / amt_credit_sd
+
+
+
+#Analyze AMT_CREDIT for Outliers using the Z-Score values
+
+outlierKD(loan.data, zscore.credit) 
+
+#Remove outliers from AMT CREDIT 
+clean.data <-  loan.data[! (zscore.amt_credit > 3) ,]
+# and use invert square, we get normal distribution
+invert_sq_amt_credit = 1 / sqrt(clean.data$AMT_CREDIT)
+qqnorm(invert_sq_amt_credit,
+       datax = TRUE,
+       col = "red",
+       ylim = c(0.0007441199, 0.004714045),
+       main = "Normal Q-Q Plot of Cleaned Inverted amount credit")
+qqline(invert_sq_amt_credit,
+       col = "blue",
+       datax = TRUE)
+```
+##Binning   
+Use binning to discretize AMT_TOTAL_INCOME into five bins named A through E with A being the lowest and E being the highest - name the new attribute CAT_AMT_TOTAL_INCOME
+```{r}
+loan.data$CAT_AMT_TOTAL_INCOME[loan.data$AMT_INCOME_TOTAL > 0 & loan.data$AMT_INCOME_TOTAL <= 100000 ] <- "A"
+loan.data$CAT_AMT_TOTAL_INCOME[loan.data$AMT_INCOME_TOTAL > 100000 & loan.data$AMT_INCOME_TOTAL <= 150000 ] <- "B"
+loan.data$CAT_AMT_TOTAL_INCOME[loan.data$AMT_INCOME_TOTAL > 150000 & loan.data$AMT_INCOME_TOTAL <= 200000 ] <- "C"
+loan.data$CAT_AMT_TOTAL_INCOME[loan.data$AMT_INCOME_TOTAL > 200000 & loan.data$AMT_INCOME_TOTAL <= 250000 ] <- "D"
+loan.data$CAT_AMT_TOTAL_INCOME[loan.data$AMT_INCOME_TOTAL > 250000 ] <- "E"
+```
+
+
+##Use MICE to impute appropriate values for the missing values   
+CNT_CHILDREN (note:  the actual value in each case was 0)
+```{r}
+# md.pattern(loan.data)
+# dataframe_children <- as.data.frame(CNT_CHILDREN)
+# #note maxit is low due to time for processing can be higher
+# imputed_Data <- mice(loan.data, m=1, maxit = 2, method = 'cart', seed = 500)
+# imputed_Data$imp$CNT_CHILDREN
+# summary(imputed_Data)
+# densityplot(imputed_Data)
+# completedData <- complete(imputed_Data,1)
+# sapply(completedData, function(x) sum(is.na(x)))
+```
+
+##Contingency table
+```{r}
+table(loan.data$NAME_FAMILY_STATUS,loan.data$NAME_HOUSING_TYPE)  
+
+
+#get a count of the n way frequency for pairs
+
+count(loan.data,vars = c("NAME_FAMILY_STATUS","NAME_HOUSING_TYPE"))
+```  
+
+##PCA
+```{r}
+classes <- sapply(loan.data.all, class)
+loan.data.numeric <- loan.data.all[,classes=="numeric"]
+#loan.data.complete <- complete.cases(loan.data.all[,classes=="numeric"])
+loan.data.complete <- na.omit(loan.data.numeric) #!is.na(loan.data.numeric))
+m.pca <- apply(loan.data.complete, 2, mean)
+s.pca <- apply(loan.data.complete, 2, sd)
+z.pca <- scale(loan.data.complete, m.pca, s.pca)
+
+
+#we observe 65 principal components with 26 PCs over 85% contributing to the 
+#variability we see in the sample
+l.pca <- prcomp(z.pca, center = TRUE, scale. = TRUE)
+summary(l.pca)
+head(l.pca)
+str(l.pca)
+distance <- dist(z.pca)
+str(distance)
+```
+##K-means clustering
+standardize numeric values
+```{r}
+classes <- sapply(loan.data.all, class)
+num.loan <- loan.data.all[,classes=="numeric"]
+num.loan$SK_ID_CURR <- loan.data.all$SK_ID_CURR
+num.loan$TARGET <- loan.data.all$TARGET
+head(num.loan,1)
+df <- na.omit(num.loan)
+df2.scale<-na.omit(num.loan)
+m <- apply(df2.scale[,-c(66, 67)], 2, mean)
+s <- apply(df2.scale[,-c(66, 67)], 2, sd)
+#classes <- sapply(df, class)
+#z<- scale(df[,classes=="numeric"], m, s)
+df2.scale[,-c(66,67)] <- lapply(df2.scale[,-c(66, 67)], function(x) c(scale(x), m, s))
+z<- scale(df[,-c(66, 67)], m, s)
+head(df2.scale,1)
+
+distance.euclidian <- dist(df2.scale[,-c(66,67)], method="euclidian")
+str(distance.euclidian)
+rand.sample.vect<-sample(1:100, 10)
+#corrplot(as.matrix(distance.euclidian), is.corr = FALSE, method="color")
+#identifying correlation between individual samples
+round(as.matrix(distance.euclidian)[1:6, 1:6], 1)
+
+resp.correlation <- cor(t(z), method="pearson")
+distance.correlation <- as.dist(1-resp.correlation)
+round(as.matrix(distance.correlation)[1:6, 1:6], 1)
+
+# Scree Plot for k-means and selecting the number of clusters
+#there are 3 obvious clusters
+wss <- (nrow(df2.scale[,-c(66,67)])-1)*sum(apply(df2.scale[,-c(66,67)],2,var))
+for (i in 2:20) wss[i] <- sum(kmeans(df2.scale[,-c(66,67)], centers=i)$withinss)
+plot(1:20, wss, type="b", xlab="Number of Clusters", ylab="Within groups sum of squares") 
+
+# K-means clustering
+kc<-kmeans(df2.scale[,-c(66,67)],3)
+
+#we see that the ratio between_SS values and total_SS values is: 25.4%
+kc
+
+#kc$cluster
+kc$centers
+
+#Determine which Id belongs to which cluster and add this data
+# to the df2.scale in form of cluster number:1, 2, or 3 per each id
+out <- cbind(df2.scale, Credit.Cluster.Num = kc$cluster)
+head(out,1)
+plot(out[,c("AMT_CREDIT","Credit.Cluster.Num")])
+plot(out[,"Credit.Cluster.Num"], (out[, "AMT_INCOME_TOTAL"]))
+
+#there are 0 unavailable values for credit clusters since we removed the NA info at the begining
+sum(is.na(out$Credit.Cluster.Num))
+
+#there are 0 duplicate credit records
+sum(duplicated(out$SK_ID_CURR))
+
+#adding the credit cluster data to the training data too:
+loan.data.all.wClusterCredit <- cbind(loan.data.all, Credit.Cluster.Num = NA) #create column
+for (row in 1:nrow(out)) {
+  SK_ID <- out[row, "SK_ID_CURR"]
+  SK_ID
+  #update column
+  loan.data.all.wClusterCredit[loan.data.all.wClusterCredit$SK_ID_CURR==SK_ID, "Credit.Cluster.Num"] <- out[out$SK_ID_CURR==SK_ID, "Credit.Cluster.Num"]
+}
+head(loan.data.all.wClusterCredit)
+
+#loan.data.all.wClusterCredit["SK_ID_CURR"==100083, "Credit.Cluster.Num"] <- out["SK_ID_CURR"==100083, "Credit.Cluster.Num"]
+
+
+```
+
+##Modeling Plan  
+As part of the modeling plan we took the following steps:
+
+* Ran Univariate and Bivariate Statistics (Check the distributions of the variables we intend to use, as well as bivariate relationships among all variables that might go into the model)
+* Dropped nonsignificant control variables
+* Checked for and resolve data issues
+* Checked for Multicollinearity
+* Outliers and influential points
+* Dealt with Missing data
+* Created new flag variables for categorical variables
+* We will use PCA to uncover correlations and further make decisions to include the variables in the model based on the results
+* Further, we will standardize the values to avoid an increased influence from some of the variables will larger range
+* We anticipate that some of our models will be greatly influence by the distribution of input variables so we will detect skew values and transform the data accordingly
+* In order to identify which explanatory variables we think would be good indicators or predictors of the potential risk of a loan: likelihood of default (higher risk) versus paid in full (lower risk), we can calculate the percent of the total number of loans that are classified as defaults.
+* The predictor target is given as credit risk and thus we will use a supervised approach
+* Further we will use cross-validation with k=5 to prepare the data for training and testing the models
+* We will employ at least two fundamentally different approaches: 
+    1. A pipeline with logistic regression and random forest, and 
+    2. A black box approach: RNN with logistic regression 
+* To create models we can use, logistic regression as the response variable (Target) follows a binomial distribution. The reasons why Logistic regression is better suited to credit risk analysis are:
+    + The independent variable (NAME_CONTRACT_TYPE, AMT_INCOME, etc.) are categorical in nature. Categories make better predictors in this analysis than actual value.  
+    + The end result has to be in probability or percentage (like customer A is x% likely to default on the given credit), which is not possible with linear regression model since its values vary between -infinity and +infinity.     
+* For model selection, we can select the model with the least residual error. We can use different cut offs to decide if a loan should be granted or not.
+* RNN: we will construct a neural network with an input layer of dimension N =  number of input variables and 1 hidden layer and a single output neuron corresponding to the output classifier variable for 2 outcomes: Yes=1 credit risk and No=0 credit risk. 
+* We will monitor the ROC for the performance of our models
+* We will compare the accuracy of classification between the RNN approach and random forest approach and determine the advantages and disadvantages for using either one or the other
+* We will also construct a decision tree based on the given inputs that can streamline the decision process of approving/ declining credit to a particular customer.
